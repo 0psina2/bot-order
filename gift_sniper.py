@@ -41,6 +41,32 @@ gift_sniper.py
    (файл .session), после чего логиниться заново не нужно.
 
 -----------------------------------------------------------------------
+ЗАПУСК НА RAILWAY / СЕРВЕРЕ (без интерактивного ввода)
+-----------------------------------------------------------------------
+На сервере нет интерактивной консоли, поэтому обычный client.start()
+там не сработает (упадёт с EOFError при попытке спросить телефон).
+
+Шаги:
+1. У СЕБЯ НА КОМПЬЮТЕРЕ (не на Railway) запусти один раз:
+       python generate_session.py
+   Он попросит телефон/код/2FA как обычно и в конце распечатает длинную
+   строку — это твоя "строка сессии" (StringSession).
+
+2. На Railway (Variables / Environment) добавь переменную:
+       TG_SESSION_STRING = <вставь скопированную строку целиком>
+   а также (если ещё не заданы):
+       TG_API_ID = 39527734
+       TG_API_HASH = 83385c56c5bba6da3b28e19831f3b55b
+
+3. Деплой gift_sniper.py как обычно, команда запуска:
+       python gift_sniper.py --watch
+   Скрипт увидит TG_SESSION_STRING и залогинится без единого вопроса.
+
+ВАЖНО: строка сессии — это как пароль от аккаунта целиком. Никогда не
+публикуй её в открытом репозитории, не пиши в чат, храни только в
+переменных окружения Railway (они приватные).
+
+-----------------------------------------------------------------------
 ВАЖНЫЕ ОГОВОРКИ
 -----------------------------------------------------------------------
 - Это НЕ гарантия "успеть первым". Если другие люди/боты тоже мониторят
@@ -64,6 +90,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from telethon import TelegramClient, functions, types
+from telethon.sessions import StringSession
 from telethon.errors import RPCError, FloodWaitError
 
 # ----------------------------------------------------------------------
@@ -72,7 +99,9 @@ from telethon.errors import RPCError, FloodWaitError
 
 API_ID = int(os.environ.get("TG_API_ID", "39527734"))
 API_HASH = os.environ.get("TG_API_HASH", "83385c56c5bba6da3b28e19831f3b55b")
-SESSION_NAME = "gift_sniper_session"                      # файл сессии
+SESSION_NAME = "gift_sniper_session"                      # файл сессии (для локального запуска)
+SESSION_STRING = os.environ.get("TG_SESSION_STRING", "")   # строка сессии (для запуска на Railway/сервере,
+                                                            # без интерактивного ввода — см. generate_session.py)
 
 TARGET_GIFT_IDS = []         # Впиши конкретные gift_id (числа), чтобы сузить вручную.
 TARGET_GIFT_NAMES = [
@@ -335,8 +364,20 @@ async def main():
     if not API_ID or not API_HASH:
         raise SystemExit("Заполни API_ID и API_HASH (получить на https://my.telegram.org)")
 
-    client = TelegramClient(SESSION_NAME, API_ID, API_HASH, flood_sleep_threshold=0)
-    await client.start()  # при первом запуске спросит телефон, код, пароль 2FA
+    if SESSION_STRING:
+        # Запуск на сервере/Railway — без интерактивного ввода.
+        session = StringSession(SESSION_STRING)
+        client = TelegramClient(session, API_ID, API_HASH, flood_sleep_threshold=0)
+        await client.connect()
+        if not await client.is_user_authorized():
+            raise SystemExit(
+                "TG_SESSION_STRING задан, но авторизация не прошла (сессия истекла/невалидна). "
+                "Сгенерируй новую строку сессии локально через generate_session.py."
+            )
+    else:
+        # Локальный запуск — обычный интерактивный логин (спросит телефон/код/2FA).
+        client = TelegramClient(SESSION_NAME, API_ID, API_HASH, flood_sleep_threshold=0)
+        await client.start()  # при первом запуске спросит телефон, код, пароль 2FA
 
     try:
         if args.list_gifts:
